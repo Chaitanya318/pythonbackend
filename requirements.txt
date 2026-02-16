@@ -1,0 +1,11 @@
+tensorflow
+pandas
+numpy
+scikit-learn
+matplotlib
+seaborn
+fastapi
+uvicorn
+python-multipart
+nltk
+
