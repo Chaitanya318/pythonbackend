@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Header
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi import Depends
+from bson import ObjectId
 from app.database import blacklist_collection
 
 from app.schemas import UserSignup, UserLogin, EmotionInput
@@ -116,30 +117,71 @@ def predict(input: EmotionInput,
 # GET USER HISTORY
 # ==========================
 @router.get("/history")
-def history(
-    authorization: str = Header(None, alias="Authorization")
+def get_history(
+    credentials: HTTPAuthorizationCredentials = Depends(security)
 ):
 
-    if authorization is None:
-        raise HTTPException(status_code=401, detail="Token missing")
+    token = credentials.credentials
 
-    token = authorization.replace("Bearer ", "")
-
-    try:
-        decoded = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-    except JWTError:
-        raise HTTPException(status_code=401, detail="Invalid token")
+    decoded = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
 
     user_id = decoded["user_id"]
 
-    data = list(
-        emotion_collection.find(
-            {"user_id": user_id},
-            {"_id": 0}
-        )
-    )
+    data = []
+
+    cursor = emotion_collection.find({"user_id": user_id})
+
+    for doc in cursor:
+
+        data.append({
+            "id": str(doc["_id"]),
+            "text": doc["text"],
+            "result": doc["result"]
+        })
 
     return data
+
+
+@router.delete("/history/{item_id}")
+def delete_single_history(
+    item_id: str,
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+
+    token = credentials.credentials
+
+    decoded = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+
+    user_id = decoded["user_id"]
+
+    emotion_collection.delete_one({
+        "_id": ObjectId(item_id),
+        "user_id": user_id
+    })
+
+    return {"message": "Deleted"}
+
+@router.delete("/history")
+def delete_all_history(
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+
+    token = credentials.credentials
+
+    decoded = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+
+    user_id = decoded["user_id"]
+
+    emotion_collection.delete_many({
+        "user_id": user_id
+    })
+
+    return {"message": "All deleted"}
+
+
+
+
+
 
 
 # ==========================
