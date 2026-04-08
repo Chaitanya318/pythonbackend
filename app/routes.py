@@ -4,7 +4,8 @@ from fastapi import Depends
 from bson import ObjectId
 from app.database import blacklist_collection
 
-from app.schemas import UserSignup, UserLogin, EmotionInput
+from app.schemas import UserSignup, UserLogin, EmotionInput, CaseDetails
+from app.database import mental_cases_collection, feedback_cases_collection
 from app.database import users_collection, emotion_collection
 from app.auth import hash_password, verify_password, create_token
 from app.predict import predict_emotion
@@ -87,29 +88,36 @@ def get_current_user(Authorization: str = Header(None)):
 
 
 @router.post("/predict")
-def predict(input: EmotionInput,
+def predict(data: EmotionInput,
             credentials: HTTPAuthorizationCredentials = Depends(security)):
 
     token = credentials.credentials
 
+    # check blacklist
     if blacklist_collection.find_one({"token": token}):
-        raise HTTPException(status_code=401, detail="Token expired. Please login again.")
+        raise HTTPException(status_code=401,
+                            detail="Token expired. Please login again.")
 
     decoded = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
 
     user_id = decoded["user_id"]
     email = decoded["email"]
 
-    result = predict_emotion(input.text)
+    # run model
+    result = predict_emotion(data.text)
 
+    # save emotion history linked to case
     emotion_collection.insert_one({
         "user_id": user_id,
         "email": email,
-        "text": input.text,
+        "case_id": data.case_id,
+        "text": data.text,
         "result": result
     })
 
     return result
+
+
 
 
 
@@ -136,10 +144,30 @@ def get_history(
         data.append({
             "id": str(doc["_id"]),
             "text": doc["text"],
-            "result": doc["result"]
+            "result": doc["result"],
+            "case_id": doc.get("case_id")   # ⭐ IMPORTANT FIX
         })
 
     return data
+
+
+@router.get("/case-history/{case_id}")
+def get_case_history(case_id: str, authorization: str = Header(None)):
+
+    token = authorization.split(" ")[1]
+    decoded = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    user_id = decoded["user_id"]
+
+    history = list(emotion_collection.find({
+        "case_id": case_id,
+        "user_id": user_id
+    }))
+
+    for h in history:
+        h["id"] = str(h["_id"])
+        del h["_id"]
+
+    return history
 
 
 @router.delete("/history/{item_id}")
@@ -182,6 +210,74 @@ def delete_all_history(
 
 
 
+@router.get("/case/{case_id}")
+def get_case(case_id: str, authorization: str = Header(None)):
+
+    token = authorization.split(" ")[1]
+    decoded = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+
+    user_id = decoded["user_id"]
+
+    case = mental_cases_collection.find_one({
+        "_id": ObjectId(case_id),
+        "user_id": user_id
+    })
+
+    if not case:
+        case = feedback_cases_collection.find_one({
+            "_id": ObjectId(case_id),
+            "user_id": user_id
+        })
+
+    if not case:
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    case["id"] = str(case["_id"])
+    del case["_id"]
+
+    return case
+
+
+
+
+@router.post("/case")
+def create_case(data: CaseDetails, authorization: str = Header(None)):
+
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Token missing")
+
+    token = authorization.split(" ")[1]
+    decoded = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+
+    user_id = decoded["user_id"]
+
+    case = {
+        "user_id": user_id,
+        "usecase": data.usecase,
+        "name": data.name,
+        "age": data.age,
+        "gender": data.gender,
+        "doctor": data.doctor,
+        "notes": data.notes,
+        "product": data.product,
+        "reviewer": data.reviewer,
+        "feedbackType": data.feedbackType
+    }
+
+    # 🔥 store in different collections
+    if data.usecase == "mental":
+        result = mental_cases_collection.insert_one(case)
+
+    elif data.usecase == "feedback":
+        result = feedback_cases_collection.insert_one(case)
+
+    else:
+        raise HTTPException(status_code=400, detail="Invalid usecase")
+
+    return {
+        "id": str(result.inserted_id),
+        "usecase": data.usecase
+    }
 
 
 # ==========================

@@ -13,4 +13,8 @@ emotion_collection = db["emotion_history"]
 
 blacklist_collection = db["blacklist_tokens"]
 
+mental_cases_collection = db["mental_cases"]
+
+feedback_cases_collection = db["feedback_cases"]
+
 
